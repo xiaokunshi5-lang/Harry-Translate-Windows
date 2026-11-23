@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>会议实时同传系统 - Qwen 实时双通道同传</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* 顶部导航控制栏 */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 24px;
+            background: #0d1117;
+            border-bottom: 1px solid #1c2333;
+            z-index: 10;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .screen-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #38bdf8;
+            letter-spacing: 0.5px;
+        }
+        .status-badge {
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background-color: #ef4444;
+            box-shadow: 0 0 6px #ef4444;
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+        .dot.connected {
+            background-color: #10b981;
+            box-shadow: 0 0 8px #10b981;
+        }
+
+        /* 极简低调的 Token 费用微型胶囊 */
+        .cost-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            font-size: 12px;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .cost-chip:hover {
+            background: rgba(255, 255, 255, 0.07);
+            border-color: rgba(56, 189, 248, 0.25);
+            color: #94a3b8;
+        }
+        .cost-chip strong {
+            color: #cbd5e1;
+            font-weight: 500;
+        }
+
+        /* 费用详情浮层 (点击胶囊时展开) */
+        .cost-popover {
+            position: absolute;
+            top: 48px;
+            right: 180px;
+            background: #111726;
+            border: 1px solid #243048;
+            border-radius: 10px;
+            padding: 16px 20px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 260px;
+            z-index: 100;
+            font-size: 13px;
+        }
+        .cost-popover.active { display: flex; }
+        .pop-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #1e293b;
+        }
+        .pop-row {
+            display: flex;
+            justify-content: space-between;
+            color: #94a3b8;
+        }
+        .pop-row span:last-child {
+            color: #f1f5f9;
+            font-weight: 500;
+        }
+        .pop-actions {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-top: 6px;
+            padding-top: 8px;
+            border-top: 1px solid #1e293b;
+        }
+        .btn-pop {
+            background: #1e2738;
+            color: #cbd5e1;
+            border: 1px solid #334155;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-pop:hover {
+            background: #2b3850;
+            color: #ffffff;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        button, a.btn-link {
+            background: #161d28;
+            color: #cbd5e1;
+            border: 1px solid #2a364a;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+        }
+        button:hover, a.btn-link:hover {
+            background: #222d40;
+            border-color: #3b4c68;
+            color: #ffffff;
+        }
+
+        /* 主体布局 */
+        #main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 单屏字幕滚动区 */
+        .subtitle-panel {
+            flex: 1;
+            padding: 40px 60px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+            scroll-behavior: smooth;
+        }
+        .subtitle-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        .subtitle-panel::-webkit-scrollbar-thumb {
+            background: #1e2532;
+            border-radius: 4px;
+        }
+
+        /* 双栏分屏样式 */
+        .split-view {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+        .split-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .split-column:first-child {
+            border-right: 2px solid #161d28;
+        }
+        .column-header {
+            padding: 10px 24px;
+            background: #0f1520;
+            border-bottom: 1px solid #1c2434;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .column-header.en { color: #38bdf8; }
+        .column-header.zh { color: #facc15; }
+
+        /* 句子卡片 */
+        .sentence-card {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px 18px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .source-text {
+            font-size: var(--src-font, 24px);
+            color: #94a3b8;
+            font-weight: 400;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+        .target-text {
+            font-size: var(--trans-font, 36px);
+            color: #facc15;
+            font-weight: 600;
+            line-height: 1.35;
+            letter-spacing: 0.4px;
+            word-break: break-word;
+        }
+        .current-active {
+            border-left: 4px solid #38bdf8;
+            background: rgba(56, 189, 248, 0.04);
+        }
+        .current-active .target-text::after {
+            content: "▋";
+            color: #38bdf8;
+            animation: blink 0.8s infinite;
+            margin-left: 6px;
+            font-size: 0.85em;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .empty-placeholder {
+            margin: auto;
+            text-align: center;
+            color: #475569;
+            font-size: 20px;
+            letter-spacing: 1px;
+        }
+
+        /* 主控仪表板入口样式 (访问 / 时的界面) */
+        .dashboard-view {
+            margin: auto;
+            max-width: 860px;
+            padding: 36px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+        .dash-title {
+            font-size: 30px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 6px;
+        }
+        .dash-desc {
+            font-size: 15px;
+            color: #94a3b8;
+            line-height: 1.6;
+        }
+        .dash-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+            margin-top: 6px;
+        }
+        .dash-card {
+            background: #0f1520;
+            border: 1px solid #1f2a3e;
+            border-radius: 12px;
+            padding: 24px 18px;
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: all 0.25s ease;
+        }
+        .dash-card:hover {
+            transform: translateY(-4px);
+            border-color: #38bdf8;
+            background: #141d2c;
+            box-shadow: 0 8px 24px rgba(56, 189, 248, 0.12);
+        }
+        .dash-card-icon {
+            font-size: 34px;
+        }
+        .dash-card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        .dash-card-subtitle {
+            font-size: 13px;
+            color: #94a3b8;
+            line-height: 1.4;
+        }
+        .badge-role {
+            display: inline-block;
+            font-size: 12px;
+            padding: 3px 9px;
+            border-radius: 20px;
+            font-weight: 500;
+            align-self: center;
+        }
+        .badge-en { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+        .badge-zh { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+        .badge-split { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+
+        /* 仪表板上的用量统计条 */
+        .dash-stats-bar {
+            background: #0d121c;
+            border: 1px solid #1a2334;
+            border-radius: 10px;
+            padding: 14px 24px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            font-size: 14px;
+            color: #94a3b8;
+        }
+        .dash-stat-item strong {
+            color: #f1f5f9;
+            font-size: 16px;
+            margin-left: 6px;
+        }
+        .dash-stat-cost strong {
+            color: #38bdf8;
+            font-size: 18px;
+            margin-left: 6px;
+        }
+    </style>
+</head>
+<body style="--src-font: 24px; --trans-font: 36px;">
+
+    <header>
+        <div class="header-left">
+            <span class="screen-title" id="page-title">会议双通道实时同传系统</span>
+            <div class="status-badge" id="status-badge">
+                <span class="dot" id="ws-dot"></span>
+                <span id="ws-status">正在连接通道...</span>
+            </div>
+            <!-- 极简微型低调用量胶囊 (点击展开明细) -->
+            <div class="cost-chip" id="cost-chip" onclick="toggleCostPopover()" title="点击查看 Token 消耗与计费明细">
+                <span>🪙</span>
+                <span id="chip-tokens">0 Token</span>
+                <span>·</span>
+                <strong id="chip-cost">¥0.00</strong>
+            </div>
+        </div>
+        <div class="controls" id="header-controls">
+            <a href="/" class="btn-link" id="btn-home" style="display: none;">主控面板</a>
+            <button onclick="changeFontSize(2)">字体 +</button>
+            <button onclick="changeFontSize(-2)">字体 -</button>
+            <button onclick="clearScreen()">清屏</button>
+            <button onclick="toggleFullScreen()">全屏模式 (F11)</button>
+        </div>
+    </header>
+
+    <!-- 费用详情气泡浮层 -->
+    <div class="cost-popover" id="cost-popover">
+        <div class="pop-title">
+            <span>📊 本次运行用量与花费</span>
+            <span style="cursor: pointer; color: #64748b;" onclick="toggleCostPopover()">✕</span>
+        </div>
+        <div class="pop-row">
+            <span>🎙️ 音频输入 Token</span>
+            <span id="pop-in-tokens">0</span>
+        </div>
+        <div class="pop-row">
+            <span>📝 文本输出 Token</span>
+            <span id="pop-out-tokens">0</span>
+        </div>
+        <div class="pop-row">
+            <span>∑ 累计总 Token</span>
+            <span id="pop-total-tokens">0</span>
+        </div>
+        <div class="pop-row" style="margin-top: 4px; padding-top: 6px; border-top: 1px dashed #1e293b;">
+            <span style="color: #38bdf8;">💰 预估总花费</span>
+            <span id="pop-cost" style="color: #38bdf8; font-size: 15px; font-weight: 700;">¥0.0000</span>
+        </div>
+        <div style="font-size: 11px; color: #475569; line-height: 1.4; margin-top: 2px;">
+            计费标准：音频输入 ¥40/M Token，文本输出 ¥100/M Token (ASR免费)
+        </div>
+        <div class="pop-actions">
+            <button class="btn-pop" onclick="resetStats()">🔄 清零统计</button>
+            <button class="btn-pop" onclick="toggleChipVisibility()">👁️ 隐藏胶囊</button>
+        </div>
+    </div>
+
+    <div id="main-container">
+        <!-- 动态由 JavaScript 根据路由加载对应视图 -->
+    </div>
+
+    <script>
+        // 最大 DOM 卡片缓存数量（防长时间会议内存膨胀）
+        const MAX_CARDS = 100;
+
+        const mainContainer = document.getElementById("main-container");
+        const pageTitle = document.getElementById("page-title");
+        const wsDot = document.getElementById("ws-dot");
+        const wsStatus = document.getElementById("ws-status");
+        const btnHome = document.getElementById("btn-home");
+        const costChip = document.getElementById("cost-chip");
+        const costPopover = document.getElementById("cost-popover");
+
+        const chipTokens = document.getElementById("chip-tokens");
+        const chipCost = document.getElementById("chip-cost");
+        const popInTokens = document.getElementById("pop-in-tokens");
+        const popOutTokens = document.getElementById("pop-out-tokens");
+        const popTotalTokens = document.getElementById("pop-total-tokens");
+        const popCost = document.getElementById("pop-cost");
+
+        // 累计用量状态
+        let globalStats = {
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_rmb: 0.0
+        };
+
+        function updateUsageDisplay(stats) {
+            if (!stats) return;
+            globalStats = stats;
+            const kTokens = stats.total_tokens >= 1000 ? (stats.total_tokens / 1000).toFixed(1) + 'k' : stats.total_tokens;
+            chipTokens.innerText = `${kTokens} Token`;
+            chipCost.innerText = `¥${stats.cost_rmb.toFixed(2)}`;
+
+            popInTokens.innerText = stats.input_tokens.toLocaleString();
+            popOutTokens.innerText = stats.output_tokens.toLocaleString();
+            popTotalTokens.innerText = stats.total_tokens.toLocaleString();
+            popCost.innerText = `¥${stats.cost_rmb.toFixed(4)}`;
+
+            // 如果主控台存在统计条，同步更新
+            const dashTok = document.getElementById("dash-tok");
+            const dashCost = document.getElementById("dash-cost");
+            if (dashTok) dashTok.innerText = stats.total_tokens.toLocaleString();
+            if (dashCost) dashCost.innerText = `¥${stats.cost_rmb.toFixed(4)}`;
+        }
+
+        function toggleCostPopover() {
+            costPopover.classList.toggle("active");
+        }
+
+        function toggleChipVisibility() {
+            costChip.style.display = costChip.style.display === "none" ? "inline-flex" : "none";
+            costPopover.classList.remove("active");
+        }
+
+        async function fetchStats() {
+            try {
+                const res = await fetch("/api/stats");
+                const data = await res.json();
+                updateUsageDisplay(data);
+            } catch (e) {}
+        }
+
+        async function resetStats() {
+            try {
+                await fetch("/api/stats/reset", { method: "POST" });
+                fetchStats();
+            } catch (e) {}
+        }
+
+        // 解析当前路由模式
+        const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+        let mode = "dashboard";
+        if (pathname === "/en") mode = "en";
+        else if (pathname === "/zh") mode = "zh";
+        else if (pathname === "/split") mode = "split";
+
+        // 单通道状态追踪
+        class ChannelStreamHandler {
+            constructor(channelName, containerElement) {
+                this.channel = channelName;
+                this.container = containerElement;
+                this.activeCard = null;
+                this.currentSentenceId = null;
+                this.ws = null;
+            }
+
+            connect(dotElem, statusElem, statusPrefix) {
+                const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+                this.ws = new WebSocket(`${protocol}//${location.host}/ws/${this.channel}`);
+
+                this.ws.onopen = () => {
+                    if (dotElem) dotElem.classList.add("connected");
+                    if (statusElem) statusElem.innerText = `${statusPrefix}已就绪 (正在监听麦克风)`;
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleSubtitle(data);
+                        if (data.usage) {
+                            // 收到当句 usage 时定期刷新全局统计
+                            fetchStats();
+                        }
+                    } catch (e) {
+                        console.error("解析字幕消息错误:", e);
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    if (dotElem) dotElem.classList.remove("connected");
+                    if (statusElem) statusElem.innerText = `${statusPrefix}已断开，3秒后重连...`;
+                    setTimeout(() => this.connect(dotElem, statusElem, statusPrefix), 3000);
+                };
+            }
+
+            handleSubtitle(data) {
+                const placeholder = this.container.querySelector(".empty-placeholder");
+                if (placeholder) placeholder.remove();
+
+                // 新句子
+                if (data.id !== this.currentSentenceId || !this.activeCard) {
+                    if (this.activeCard) {
+                        this.activeCard.classList.remove("current-active");
+                    }
+                    this.currentSentenceId = data.id;
+                    this.activeCard = document.createElement("div");
+                    this.activeCard.className = "sentence-card current-active";
+                    this.activeCard.innerHTML = `
+                        <div class="source-text"></div>
+                        <div class="target-text"></div>
+                    `;
+                    this.container.appendChild(this.activeCard);
+
+                    // 滑动窗口检查：超出 MAX_CARDS 则移除最旧卡片
+                    while (this.container.children.length > MAX_CARDS) {
+                        this.container.removeChild(this.container.firstElementChild);
+                    }
+                }
+
+                // 实时更新原文与译文
+                const srcElem = this.activeCard.querySelector(".source-text");
+                const transElem = this.activeCard.querySelector(".target-text");
+
+                if (data.source !== undefined && data.source !== null) {
+                    srcElem.innerText = data.source;
+                }
+                if (data.target !== undefined && data.target !== null) {
+                    transElem.innerText = data.target;
+                }
+
+                if (data.is_final) {
+                    this.activeCard.classList.remove("current-active");
+                    this.activeCard = null;
+                }
+
+                this.container.scrollTop = this.container.scrollHeight;
+            }
+
+            clear() {
+                this.container.innerHTML = "";
+                this.activeCard = null;
+                this.currentSentenceId = null;
+            }
+        }
+
+        let enHandler = null;
+        let zhHandler = null;
+
+        // 根据路由渲染视图
+        if (mode === "dashboard") {
+            btnHome.style.display = "none";
+            pageTitle.innerText = "会议双通道同传系统 - 主控台";
+            wsDot.classList.add("connected");
+            wsStatus.innerText = "服务在线";
+
+            mainContainer.innerHTML = `
+                <div class="dashboard-view">
+                    <div>
+                        <div class="dash-title">会议实时双通道同传投屏系统</div>
+                        <div class="dash-desc">搭载阿里云千问 3.8 实时同传全双工大模型，支持同一麦克风拾音、中英双向独立并发同传</div>
+                    </div>
+
+                    <div class="dash-stats-bar">
+                        <div class="dash-stat-item">
+                            <span>🪙 本次会议累计 Token:</span>
+                            <strong id="dash-tok">0</strong>
+                        </div>
+                        <div class="dash-stat-item dash-stat-cost">
+                            <span>💰 预估总花费:</span>
+                            <strong id="dash-cost">¥0.0000</strong>
+                        </div>
+                        <button class="btn-pop" onclick="resetStats()">🔄 清零统计</button>
+                    </div>
+
+                    <div class="dash-grid">
+                        <a href="/en" class="dash-card">
+                            <div class="dash-card-icon">🇺🇸</div>
+                            <span class="badge-role badge-en">面向外宾 / 英文大屏</span>
+                            <div class="dash-card-title">中译英专属大屏</div>
+                            <div class="dash-card-subtitle">中文发言实时翻译为纯正英语，可全屏投送给外宾屏幕</div>
+                        </a>
+                        <a href="/zh" class="dash-card">
+                            <div class="dash-card-icon">🇨🇳</div>
+                            <span class="badge-role badge-zh">面向中方 / 中文大屏</span>
+                            <div class="dash-card-title">英译中专属大屏</div>
+                            <div class="dash-card-subtitle">外宾英文发言实时翻译为通顺中文，可全屏投送给中方屏幕</div>
+                        </a>
+                        <a href="/split" class="dash-card">
+                            <div class="dash-card-icon">🖥️</div>
+                            <span class="badge-role badge-split">现场控台监看</span>
+                            <div class="dash-card-title">左右双栏同屏监看</div>
+                            <div class="dash-card-subtitle">在一台电脑上左侧中译英、右侧英译中，方便控台实时对照</div>
+                        </a>
+                    </div>
+                </div>
+            `;
+        } else if (mode === "en") {
+            btnHome.style.display = "inline-flex";
+            pageTitle.innerText = "中译英实时大屏 (面向外宾 / 英文受众)";
+            mainContainer.innerHTML = `
+                <div class="subtitle-panel" id="en-container">
+                    <div class="empty-placeholder">中译英通道就绪，发言时英文字幕将在此实时呈现...</div>
+                </div>
+            `;
+            const container = document.getElementById("en-container");
+            enHandler = new ChannelStreamHandler("en", container);
+            enHandler.connect(wsDot, wsStatus, "英文通道");
+        } else if (mode === "zh") {
+            btnHome.style.display = "inline-flex";
+            pageTitle.innerText = "英译中实时大屏 (面向中方 / 中文受众)";
+            mainContainer.innerHTML = `
+                <div class="subtitle-panel" id="zh-container">
+                    <div class="empty-placeholder">英译中通道就绪，发言时中文字幕将在此实时呈现...</div>
+                </div>
+            `;
+            const container = document.getElementById("zh-container");
+            zhHandler = new ChannelStreamHandler("zh", container);
+            zhHandler.connect(wsDot, wsStatus, "中文通道");
+        } else if (mode === "split") {
+            btnHome.style.display = "inline-flex";
+            pageTitle.innerText = "双向同传对照监看屏 (左右分栏)";
+            wsDot.classList.add("connected");
+            wsStatus.innerText = "双通道监看已就绪";
+
+            mainContainer.innerHTML = `
+                <div class="split-view">
+                    <div class="split-column">
+                        <div class="column-header en">
+                            <span>🇺🇸 中译英实时流 (面向外宾)</span>
+                            <span id="split-en-status" style="font-size: 12px; font-weight: normal; color: #94a3b8;">连接中...</span>
+                        </div>
+                        <div class="subtitle-panel" id="split-en-container">
+                            <div class="empty-placeholder">等待发言...</div>
+                        </div>
+                    </div>
+                    <div class="split-column">
+                        <div class="column-header zh">
+                            <span>🇨🇳 英译中实时流 (面向中方)</span>
+                            <span id="split-zh-status" style="font-size: 12px; font-weight: normal; color: #94a3b8;">连接中...</span>
+                        </div>
+                        <div class="subtitle-panel" id="split-zh-container">
+                            <div class="empty-placeholder">等待发言...</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            const enContainer = document.getElementById("split-en-container");
+            const zhContainer = document.getElementById("split-zh-container");
+            const splitEnStatus = document.getElementById("split-en-status");
+            const splitZhStatus = document.getElementById("split-zh-status");
+
+            enHandler = new ChannelStreamHandler("en", enContainer);
+            enHandler.connect(null, splitEnStatus, "已连接");
+
+            zhHandler = new ChannelStreamHandler("zh", zhContainer);
+            zhHandler.connect(null, splitZhStatus, "已连接");
+        }
+
+        // 初始拉取一次统计
+        fetchStats();
+
+        // 字号调节
+        function changeFontSize(delta) {
+            const body = document.body;
+            let curTrans = parseInt(getComputedStyle(body).getPropertyValue('--trans-font'));
+            let curSrc = parseInt(getComputedStyle(body).getPropertyValue('--src-font'));
+            curTrans = Math.max(18, Math.min(64, curTrans + delta));
+            curSrc = Math.max(14, Math.min(48, curSrc + delta));
+            body.style.setProperty('--trans-font', `${curTrans}px`);
+            body.style.setProperty('--src-font', `${curSrc}px`);
+        }
+
+        // 清屏
+        function clearScreen() {
+            if (enHandler) enHandler.clear();
+            if (zhHandler) zhHandler.clear();
+        }
+
+        // 全屏切换
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    alert(`全屏切换失败: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+    </script>
+</body>
+</html>
